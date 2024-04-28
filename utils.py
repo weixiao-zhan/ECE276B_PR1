@@ -180,6 +180,34 @@ def load_all_random_env(env_folder):
         re.append((env, info, env_path))
     return re
 
+def load_one_random_env(env_path):
+    with open(env_path, "rb") as f:
+        env = pickle.load(f)
+
+    info = {
+        "height": env.unwrapped.height,
+        "width": env.unwrapped.width,
+        "init_agent_pos": env.unwrapped.agent_pos,
+        "init_agent_dir": env.unwrapped.dir_vec,
+        "door_pos": [],
+        "door_open": [],
+    }
+
+    for i in range(env.unwrapped.height):
+        for j in range(env.unwrapped.width):
+            if isinstance(env.get_wrapper_attr('grid').get(j, i), Key):
+                info["key_pos"] = np.array([j, i])
+            elif isinstance(env.get_wrapper_attr('grid').get(j, i), Door):
+                info["door_pos"].append(np.array([j, i]))
+                if env.get_wrapper_attr('grid').get(j, i).is_open:
+                    info["door_open"].append(True)
+                else:
+                    info["door_open"].append(False)
+            elif isinstance(env.get_wrapper_attr('grid').get(j, i), Goal):
+                info["goal_pos"] = np.array([j, i])
+
+    return (env, info, env_path)
+
 def save_env(env, path):
     with open(path, "wb") as f:
         pickle.dump(env, f)

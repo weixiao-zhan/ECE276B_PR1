@@ -1,7 +1,7 @@
 from utils import *
 from minigrid.core.world_object import Wall
 from tqdm import tqdm
-from typing import Tuple
+from typing import Any, Generator, Tuple
 
 class XY:
     def __init__(self, x = 0, y = 0):
@@ -97,14 +97,14 @@ class State:
         return f"State:{self.__hash__()}\n\tAgent:{self.agent_pos}, {self.agent_dir}\n\tGoal:{self.goal_pos}\n\tKey:{self.key_pos}, {self.key_carrying}\n\tDoor:{self.door_pos},{self.door_is_open}\n"
 
 class DoorKeySolver:
-    def __init__(self, env_path) -> None:
-        self.env, self.info = load_env(env_path)
-    
-    def is_wall(self, pos):
-        return isinstance(self.env.get_wrapper_attr('grid').get(pos.x, pos.y), Wall)
+    def __init__(self):
+        pass
+
+    def is_wall(self, pos: XY) -> bool:
+        raise NotImplementedError
 
     def motion_model(self, state: State, control):
-        new_state = State(1).init_from_state(state)
+        new_state = State(state.door_num).init_from_state(state)
         
         if control == ST: # stay
             if state.agent_pos == state.goal_pos:
@@ -124,7 +124,7 @@ class DoorKeySolver:
 
         if control == MF: # Move Forward
             if self.is_wall(front_pos) or \
-                any(front_pos == state.door_pos[i] and not state.door_is_open[i] 
+                any(front_pos == state.door_pos[i] and (not state.door_is_open[i]) 
                     for i in range(state.door_num)):
                 return None, float("inf")
             new_state.agent_pos = front_pos
@@ -138,19 +138,97 @@ class DoorKeySolver:
 
         if control == UD: # Unlock Door
             for i in range(state.door_num):
-                if front_pos == state.door_pos[i] and not state.door_is_open[i] and state.key_carrying:
+                if front_pos == state.door_pos[i] and \
+                        (not state.door_is_open[i]) and \
+                        state.key_carrying:
                     tmp_list = list(state.door_is_open)
                     tmp_list[i] = True
                     new_state.door_is_open = tuple(tmp_list)
                     new_state.key_carrying = False
                     return new_state, 1
-        return None, float("inf")
+            return None, float("inf")
+    
+        raise ValueError("not supported control")
     
     def terminate_cost(self, state:State):
         if state.agent_pos == state.goal_pos:
             return 0
         return float("inf")
     
+    def iter_state_space(self)-> Generator[State, Any, None]:
+        raise NotImplementedError
+    
+    def iter_control_space(self):
+        for u in [ST,MF,TL,TR,PK,UD]:
+            yield u
+
+    def solve(self, time_horizon):
+        self.time_horizon = time_horizon
+        print(f"solving with time_horizon={self.time_horizon}")
+        self.V_t = dict()
+        self.Pi_t = dict()
+
+        V = dict()
+        for state in self.iter_state_space():
+            terminate_cost = self.terminate_cost(state)
+            if terminate_cost < float('inf'):
+                V[state] = terminate_cost
+        self.V_t[self.time_horizon] = V
+
+        for t in tqdm(range(self.time_horizon-1,-1,-1)):
+            V_next = self.V_t[t + 1]  # Get the value function of the next time step
+            V = dict()
+            Pi = dict()
+            for state in self.iter_state_space():
+                best_cost = float('inf')
+                best_control = None
+                for control in self.iter_control_space():
+                    new_state, stage_cost = self.motion_model(state, control)
+                    if new_state is not None:
+                        cost = stage_cost + V_next.get(new_state, float("inf"))
+                    else:
+                        cost = float("inf")
+                    if cost < best_cost:
+                        best_cost = cost
+                        best_control = control
+                if best_control is not None:
+                    V[state] = best_cost
+                    Pi[state] = best_control
+            
+            self.V_t[t] = V
+            self.Pi_t[t] = Pi
+    
+    def query(self, state: State):
+        total_cost = self.V_t[0][state]
+        controls = []
+        for t in range(0, self.time_horizon):
+            best_control = self.Pi_t[t][state]
+            if best_control == ST:
+                break
+            controls.append(best_control)
+
+            if state is None:
+                raise TypeError("should never happen")
+            state, _ = self.motion_model(state, best_control)
+
+        print(f"result: optimal cost: {total_cost}\noptimal control policy: {[control_str[control] for control in controls]}")
+        return total_cost, controls
+    
+    def debug_first_time_sourced(self, state_hash):
+        for t in range(self.time_horizon, -1, -1):
+            for ss in self.V_t[t].keys():
+                if ss.__hash__() == state_hash:
+                    return t, self.V_t[t][ss]
+        return -1,-1
+
+class DoorKeySolver_1(DoorKeySolver):
+    def __init__(self, env, info) -> None:
+        DoorKeySolver().__init__()
+        self.env, self.info = env, info
+    
+    def is_wall(self, pos):
+        return isinstance(self.env.get_wrapper_attr('grid').get(pos.x, pos.y), Wall)
+
     def iter_state_space(self):
         key_pos = XY(*self.info["key_pos"])
         door_pos = XY(*self.info["door_pos"])
@@ -161,91 +239,72 @@ class DoorKeySolver:
                 if self.is_wall(agent_pos):
                     continue
                 for agent_dir in [XY(0,1), XY(1,0),XY(0,-1),XY(-1,0)]:
-                    yield State(1).init(agent_pos, agent_dir, goal_pos, key_pos, False, (door_pos,), (False,))
-                    yield State(1).init(agent_pos, agent_dir, goal_pos, key_pos, True, (door_pos,), (False,))
-                    yield State(1).init(agent_pos, agent_dir, goal_pos, key_pos, False, (door_pos,), (True,))
-                    yield State(1).init(agent_pos, agent_dir, goal_pos, key_pos, True, (door_pos,), (True,)) # not possible
+                    for key_carrying in [True, False]:
+                        for door_open in [True, False]:    
+                            yield State(1).init(
+                                agent_pos, agent_dir, goal_pos, 
+                                key_pos, key_carrying, 
+                                (door_pos,), (door_open,))
 
-    def iter_control_space(self):
-        for u in [ST,MF,TL,TR,PK,UD]:
-            yield u
+    def gen_init_state(self):
+        return State(1).init(
+            XY(*self.info["init_agent_pos"]),
+            XY(*self.info["init_agent_dir"]),
+            XY(*self.info["goal_pos"]),
+            XY(*self.info["key_pos"]), False,
+            (XY(*self.info["door_pos"]),),
+            (self.env.get_wrapper_attr('grid').get(self.info["door_pos"][0], self.info["door_pos"][1]).is_open,)
+        )
+    
+    def solve(self):
+        time_horizon = (self.info["height"]-2) * (self.info["width"]-2) * 2
+        return super().solve(time_horizon)
 
-    def solve(self, time_horizon = 0):
-        if time_horizon > 0:
-            self.time_horizon = time_horizon
-        else:
-            self.time_horizon = (self.info["height"]-2) * (self.info["width"]-2) * 4 # ? is this enough?
-        print("solve: time_horizon",self.time_horizon)
-        self.V_t = dict()
-        self.Pi_t = dict()
+class DoorKeySolver_2(DoorKeySolver):
+    def __init__(self) -> None:
+        DoorKeySolver().__init__()
+    
+    def is_wall(self, pos: XY):
+        if pos.x < 0 or pos.x > 7 or pos.y < 0 or pos.y > 7 or \
+            (pos.x == 4 and (pos.y != 2 and pos.y != 5)):
+            return True
+        return False
 
-        V = dict()
-        for state in self.iter_state_space():
-            V[state] = self.terminate_cost(state)
-        self.V_t[self.time_horizon] = V
+    def iter_state_space(self):
+        door_num = 2
+        door_pos = (XY(4,2), XY(4,5))
 
-        for t in tqdm(range(self.time_horizon-1,-1,-1)):
-            V_next = self.V_t[t + 1]  # Get the value function of the next time step
-            V = dict()
-            Pi = dict()
-            for state in self.iter_state_space():
-                # print(state.agent_pos, state.agent_dir)
-                best_cost = float('inf')
-                best_control = None
-                for control in self.iter_control_space():
-                    new_state, stage_cost = self.motion_model(state, control)
-                    if new_state is not None:
-                        # print(f"* --{control_str[control]}({stage_cost})--> {new_state.agent_pos}, {new_state.agent_dir}")
-                        cost = stage_cost + V_next.get(new_state, float("inf"))
-                    else:
-                        cost = float("inf")
-                    if cost < best_cost:
-                        best_cost = cost
-                        best_control = control
-                if best_control is not None:
-                    # print(f"** best: {control_str[best_control]}({best_cost})")
-                    V[state] = best_cost
-                    Pi[state] = best_control
-            
-            self.V_t[t] = V
-            self.Pi_t[t] = Pi
+        for x in range(8):
+            for y in range(8):
+                agent_pos = XY(x, y)
+                if self.is_wall(agent_pos):
+                    continue
+                for agent_dir in [XY(0,1), XY(1,0),XY(0,-1),XY(-1,0)]:
+                    for goal_pos in [XY(5,1), XY(6,3), XY(5,6)]:
+                        for key_pos in [XY(1,1), XY(2,3), XY(1,6)]:
+                            for key_carrying in [True, False]:
+                                for door_open in [(True, True), (True, False), (False, True), (False, False)]:
+                                    yield State(door_num).init(
+                                        agent_pos, agent_dir, goal_pos, 
+                                        key_pos, key_carrying, 
+                                        door_pos, door_open)
 
-    def result(self):
-
-        state = State(1).init(
-            XY(
-                self.info["init_agent_pos"][0],
-                self.info["init_agent_pos"][1]),
-            XY(
-                self.info["init_agent_dir"][0],
-                self.info["init_agent_dir"][1]),
-            XY(
-                self.info["goal_pos"][0],
-                self.info["goal_pos"][1]),
-            XY(
-                self.info["key_pos"][0],
-                self.info["key_pos"][1]),
+    def gen_init_state(self, info):
+        return State(2).init(
+            XY(*info["init_agent_pos"]),
+            XY(*info["init_agent_dir"]),
+            XY(*info["goal_pos"]),
+            XY(*info["key_pos"]),
             False,
             (
-                XY(
-                    self.info["door_pos"][0],
-                    self.info["door_pos"][1]
-                ),
+                XY(*info["door_pos"][0]),
+                XY(*info["door_pos"][1])
             ),
-            (
-                self.env.get_wrapper_attr('grid').get(self.info["door_pos"][0], self.info["door_pos"][1]).is_open,
-            )
+            tuple(info["door_open"])
         )
-        
-        total_cost = self.V_t[0][state]
-        controls = []
-        for t in range(0, self.time_horizon):
-            best_control = self.Pi_t[t][state]
-            if best_control == ST:
-                break
-            if state is None:
-                raise TypeError("should never happen")
-            controls.append(best_control)
-            state, _ = self.motion_model(state, best_control)
-        print(f"result: optimal cost: {total_cost}\noptimal control policy: {[control_str[control] for control in controls]}")
-        return total_cost, controls
+    
+    def solve(self):
+        # time_horizon = 8 * 8 * 2
+        time_horizon = 32
+        return super().solve(time_horizon)
+
