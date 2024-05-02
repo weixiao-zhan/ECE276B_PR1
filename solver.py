@@ -195,13 +195,18 @@ class DoorKeySolver:
                     V[state] = best_cost
                     Pi[state] = best_control
             
+            if V == V_next:
+                print(f"DP early stopped at {t}")
+                break
+
             self.V_t[t] = V
             self.Pi_t[t] = Pi
     
     def query(self, state: State):
-        total_cost = self.V_t[0][state]
+        t0 = min(self.V_t.keys())
+        total_cost = self.V_t[t0][state]
         controls = []
-        for t in range(0, self.time_horizon):
+        for t in range(t0, self.time_horizon):
             best_control = self.Pi_t[t][state]
             if best_control == ST:
                 break
@@ -257,7 +262,7 @@ class DoorKeySolver_1(DoorKeySolver):
         )
     
     def solve(self):
-        time_horizon = (self.info["height"]-2) * (self.info["width"]-2) * 2
+        time_horizon = len(list(self.iter_state_space()))
         return super().solve(time_horizon)
 
 class DoorKeySolver_2(DoorKeySolver):
@@ -304,7 +309,6 @@ class DoorKeySolver_2(DoorKeySolver):
         )
     
     def solve(self):
-        # time_horizon = 8 * 8 * 2
-        time_horizon = 32
+        time_horizon = len(list(self.iter_state_space()))
         return super().solve(time_horizon)
 

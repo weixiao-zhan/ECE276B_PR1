@@ -213,7 +213,7 @@ def save_env(env, path):
         pickle.dump(env, f)
 
 
-def plot_env(env):
+def plot_env(env, path = None):
     """
     Plot current environment
     ----------------------------------
@@ -221,8 +221,9 @@ def plot_env(env):
     img = env.render()
     plt.figure()
     plt.imshow(img)
+    if path is not None:
+        plt.savefig(path)
     plt.show()
-
 
 def draw_gif_from_seq(seq, env, path="./gif/doorkey.gif"):
     """

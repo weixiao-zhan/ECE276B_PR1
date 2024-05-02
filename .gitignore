@@ -1,2 +1,6 @@
 __pycache__/*
 envs/*
+report/*
+!report/report.tex
+!report/report.pdf
+.DS_Store

@@ -1,0 +1,522 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+% The preceding line is only needed to identify funding in the first footnote. If that is unneeded, please comment it out.
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{subcaption}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{listings}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+\begin{document}
+
+\title{ECE276B PR1 Report}
+
+\author{
+\IEEEauthorblockN{1\textsuperscript{st} Weixiao Zhan}
+\IEEEauthorblockA{
+    weixiao-zhan[at]ucsd[dot]edu}
+}
+
+\maketitle
+
+
+\section{Introduction}
+The Door \& Key problem is a type of deterministic Markov process,
+where an agent navigates to through a grid of cells to reach certain goal position.
+Along the way, the agent needs to avoid obstacles (walls in our environment), retrieve a key and use it to open doors.
+The scenario is applicable in robotics, particularly in environments like warehouses 
+where robots perform multi-step tasks to retrieve items and avoid obstacles and other robots.
+
+The deterministic optimal control (DOC) policy of Door \& Key problem can be 
+found via dynamic programming (DP).
+The DP program evaluates and optimizes control decisions at all states,
+achieving efficient computation of DOC policy 
+and their corresponding cost.
+
+
+\section{Problem Formulation}
+Markov Decision Process can be described as the collection of 
+state space $\mathcal{X}$, control space $\mathcal{U}$, 
+motion model $f$, time horizon $T$, stage cost $l$, and terminal costs $q$. 
+
+Denote the DOC policy and value function as:
+$$
+\begin{aligned}
+    \pi_{t} (x)&=u\\ 
+    V_{t}(x)&\in \mathbb{R}
+\end{aligned} 
+\bigg|
+\begin{aligned}
+    x&\in \mathcal{X}\\ 
+    u&\in \mathcal{U}
+\end{aligned} 
+$$
+
+\subsection{state space}
+The environment of Door \& Key problem is a grid ($GD$),
+which has certain width and height. 
+Each cell in the grid can either be free space ($FS$) or occupied by wall ($WL$).
+Formally:
+$$
+\begin{aligned}
+GD
+&= \left\{ 
+    \left[ \begin{gathered} x \\ y \end{gathered} \right] 
+    \bigg|
+    \begin{aligned}
+    \forall x &\in [0, \text{width}) \\
+    \forall y &\in [0, \text{height})
+    \end{aligned} 
+\right\} \\
+WL &\subset GD \\
+FS & = GD\setminus FS
+\end{aligned}
+$$ 
+
+State $x \in \mathcal{X}$ is defined as the collection of 
+agent position ($ap$), agent direction ($ad$), goal position ($gp$),
+key position ($kp$), key carrying status ($ks$), 
+doors position ($dp$), and doors open status ($ds$).
+$$
+\begin{aligned}
+x
+&=\left( \begin{matrix}
+    ap & ad & gp \\ 
+    kp & ks &\\ 
+    dp & ds
+&\end{matrix} \right) \\
+\mathcal{X}
+    &=\left\{ x\middle|\begin{aligned}
+        ap,gp,kp&\in FS\\ 
+        ad&\in \left\{ \left[ \begin{gathered}0\\ 1\end{gathered} \right]  ,\left[ \begin{gathered}1\\ 0\end{gathered} \right]  ,\left[ \begin{gathered}0\\ -1\end{gathered} \right]  ,\left[ \begin{gathered}-1\\ 0\end{gathered} \right]  \right\}  \\ 
+        ks&\in \left\{ 0,1\right\}  \\ 
+        dp&\in FS^{n}\\ 
+        ds&\in \left\{ 0,1\right\}^{n}  
+    \end{aligned} \right\}  
+\end{aligned}
+$$
+in which, $n$ is the number of doors and inherent in state;
+$ks = 1$ means agent is carrying the key; and $ds[i] = 1$ means i-th door is open.
+
+\subsection{control space}
+There are 5 actions the agent can take:
+$$
+\mathcal{U}=
+\left\{ \begin{aligned}
+    MF&:\text{move forward} \\ 
+    TL&:\text{turn left} \\ 
+    TR&:\text{turn right} \\ 
+    PK&:\text{pick up key} \\ 
+    UD&:\text{unlock the door} \\
+    ST&:\text{stay at goal location} 
+\end{aligned} \right. 
+$$
+
+\subsection{motion model}
+\label{subsec:f}
+Consider state $x \in \mathcal{X}$ taking action $u \in \mathcal{U}$.
+The motion model is:
+\begin{enumerate}    
+        \item $u = MF$:
+        The agent moves forward 1 cell in agent direction. 
+        This action is only valid when the front cell is not wall or closed doors 
+        (ensured on Algorithm \ref{algo:FL} line \ref{line:MF}).
+
+        \item $u = TL$:
+        The agent turn 90 degree in counter-clock direction.
+        
+        \item $u = TR$:
+        The agent turn 90 degree in clock direction.
+        
+        \item $u = PK$:
+        The agent pick up key in front cell. 
+        This action is only valid when the front cell is the key position
+        and the agent hasn't already picked the key.
+        (ensured on Algorithm \ref{algo:FL} line \ref{line:PK})
+
+        \item $u = UD$:
+        The agent unlock the door in front cell.
+        This action is only valid when the agent is carrying the key and 
+        front position is a closed door.
+        (ensured on Algorithm \ref{algo:FL} line \ref{line:UD})
+
+        \item $u = ST$: 
+        The agent should be able to stay at the goal cell.
+        (ensured on Algorithm \ref{algo:FL} line \ref{line:ST}).
+    \end{enumerate}
+
+\subsection{stage cost}
+\label{subsec:l}
+Stage cost is defined on state-control combinations, whose motion models are valid.
+$$
+l(x ,u)\begin{cases}2&u=FW\\ 1&u=TR\\ 1&u=TR\\ 1&u=PK\\ 1&u=UD\\ 0&u=ST\end{cases} 
+$$
+\subsection{terminal cost}
+
+$$
+q\left( x\right)  =\begin{cases}0&x.ap=x.gp\\ \infty &o/w\end{cases} 
+$$
+
+\subsection{time horizon}
+Markov assumption bounds the length of DOC sequence 
+no greater than the number of states.
+$$T \le |\mathcal{X}|$$
+
+\subsection{backward DP}
+In Door \& Key DP, the initial values are:
+$$V_T(x) = q(x), \forall x \in \mathcal{X}$$
+State transition equation of the DP are:
+$$
+\begin{gathered}
+    \left\{\begin{aligned}
+        Q_t(x,u) &= l(x,u) + V_{t+1}(f(x,u)) \\
+        V_t(x) &= \min_u Q_t(x,u) \\
+        \pi_t(x) &= \arg\min_u Q_t(x,u)
+    \end{aligned}\right\}, \forall t \in [0, T)
+\end{gathered}
+$$
+
+The backward DP program starts at $t=T$ and works it way to $t=0$.
+Meanwhile, backward DP can terminate early if the value function of current time step
+is the same as the one of next time step. 
+This ensures the DP has find shortest DOC policy of all states that can reach the goal state.
+
+
+\section{Technical Approach}
+
+The \texttt{solver.py} implements a dynamic programming-based solution 
+to the Door \& Key problem.
+The core of the implementation lies within two main classes: 
+\texttt{State} and \texttt{DoorKeySolver}.
+
+\subsection{hash-able \texttt{State} class}
+An helper class, \texttt{XY}, is defined to abstract 2D position and direction coordinates.
+It provides initialize, add (handy in computing forward position), 
+multiply (handy in turning) and hash methods. 
+
+The \texttt{State} class is the abstraction of state $x$,
+and encapsulates: the position and direction of the agent, 
+the position of the goal,
+the position of the key, whether the key is being carried, 
+and the status (open/closed) of each door.
+Each state is uniquely identifiable and comparable based on the hash of its properties, 
+allowing efficient state management and lookup.
+
+\begin{lstlisting}[language=python]
+Class XY
+    x : int
+    y : int
+Class State
+    agent_pos : XY
+    agent_dir : XY
+    goal_pos  : XY
+    key_pos   : XY
+    key_carrying : bool
+    door_num  : int
+    door_pos  : tuple[XY]
+    door_is_open : tuple[bool]
+\end{lstlisting}
+
+\subsection{abstract \texttt{DoorKeySolver} classes}
+\texttt{DoorKeySolver} class is an abstract solver class for the Door \& Key problem.
+It implements three functions that are intrinsic of the problem
+and four functions to implement the backward DP algorithm over a finite time horizon.
+\begin{lstlisting}[language=python]
+Class DoorKeySolver:
+    # intrinsic
+    is_wall(pos: XY) -> bool
+    motion_model(state: State, control) 
+        -> tuple[State, int]
+    terminate_cost(state:State) -> int
+    # DP
+    iter_state_space() -> Generator[State]
+    iter_control_space() -> Generator[int]
+    solve(time_horizon)
+    query(state: State)
+\end{lstlisting}
+
+Algorithm \ref{algo:FL} implements 
+the motion model and stage cost, 
+described in section \ref{subsec:f} and \ref{subsec:l}.
+The new state and the stage cost are return together if the action is valid.
+\begin{algorithm}
+    \caption{motion model and state cost}
+    \label{algo:FL}
+    \begin{algorithmic}[1] % The number [1] enables line numbering
+    \Procedure{}{$x, u$}
+        \State $fp \gets x.ps + x.dir$ 
+        \Comment forward position
+        \State $x' \gets copy(x)$
+        \If{$u = MF \wedge fp \in FS \wedge (!\exists i \text{ s.t. } fp = x.dp[i] \wedge x.ds[i] = 0)$}  \label{line:MF}
+            \State $x'.ap \gets x.ap + x.ad$
+            \State \Return $x', 2$
+        \ElsIf{$u = TL$}
+            \State $x'.ad \gets \left[ \begin{matrix}0&1\\ -1&0\end{matrix} \right]  x.ad$
+            \State \Return $x', 1$
+        \ElsIf{$u = TR$}
+            \State $x'.ad \gets \left[ \begin{matrix}0&-1\\ 1&0\end{matrix} \right]  x.ad$
+            \State \Return $x', 1$
+        \ElsIf{$u = PK \wedge fp = x.kp \wedge x.ks = 0$} \label{line:PK}
+            \State $x'.ks \gets 1$
+            \State \Return $x', 1$
+        \ElsIf{$u = UD \wedge x.ks = 1 \wedge (\exists i \text{ s.t. } fp = x.dp[i] \wedge x.ds[i] = 0)$} \label{line:UD}
+            \State $x'.ks = 0$
+            \State $x'.ds[i] = 1$
+            \State \Return $x', 1$
+        \ElsIf{$u = ST \wedge x.ap = x.gp$} \label{line:ST}
+            \State \Return $x', 0$
+        \EndIf
+        \State \Return $\emptyset, \infty$
+        \Comment non-valid state-control combination
+    \EndProcedure
+    \end{algorithmic}
+\end{algorithm}
+
+Algorithm \ref{algo:solve} implements \texttt{solve}, the main backward DP logic.
+\begin{algorithm}
+\caption{backward DP}
+\label{algo:solve}
+\begin{algorithmic}[1] % The number [1] enables line numbering
+\Procedure{solve}{$T$}
+    \State $V \gets \text{dictionary}()$
+    \State $\pi \gets \text{dictionary}()$
+    \State \Comment{set init values}
+    \State $V[T] \gets \text{dictionary}()$
+    \ForAll{$x$ in $\text{iter\_state\_space}()$}
+        \State $V[T][x] \gets \text{terminate\_cost}(x)$
+    \EndFor
+    \State \Comment{backward DP}
+    \For{$t \gets [T-1, -1, -1]$}
+        \State $V[t] \gets \text{dictionary}()$
+        \State $\pi[t] \gets \text{dictionary}()$
+
+        \ForAll{$x$ in $\text{iter\_state\_space}()$}
+            \State $best\_cost \gets \infty$
+            \State $best\_control \gets \text{None}$
+            \ForAll{$u$ in $\text{iter\_control\_space}()$}
+                \State $x', l \gets \text{motion\_model}(x, u)$
+                \If{$x' \neq \text{None}$}
+                    \State $q \gets l + V[t+1][x']$
+                    \If{$q < best\_cost$}
+                        \State $best\_cost \gets q$
+                        \State $best\_control \gets u$
+                    \EndIf
+                \EndIf
+            \EndFor
+            \If{$best\_control \neq \text{None}$}
+                \State $V[t][x] \gets best\_cost$
+                \State $\pi[t][x] \gets best\_control$
+            \EndIf
+
+        \EndFor
+        \If {$V[t] = V[t+1]$}
+            \State break \label{line:t}
+        \EndIf
+    \EndFor
+    \State $\textit{self}.V \gets V$
+    \State $\textit{self}.\pi \gets \pi$
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+
+Algorithm \ref{algo:query} implements \texttt{query}, 
+which build control sequence from certain initial state.
+\begin{algorithm}
+\caption{query}
+\label{algo:query}
+\begin{algorithmic}[1] % The number [1] enables line numbering
+\Procedure{query}{$x$}
+    \State controls $\gets$ empty list
+    \For{$t = 0$ to $T$}
+        \State $ u \gets \pi[t][x]$
+        \If{best\_control = ST}
+        \Comment skip stay action
+            \State \textbf{break}
+        \EndIf
+        \State controls.append($u$)
+        \State $x \gets f(x, u)$
+    \EndFor
+    \State \textbf{return} controls
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+
+\subsection{specific implementations}
+Two implementations of \texttt{DoorKeySolver} are provided, 
+They over-write \texttt{is\_wall} and \texttt{iter\_state\_space} functions
+to tailor different grid environments and problem setups, 
+demonstrating the solver's adaptability to various configurations. 
+
+\texttt{DoorKeySolver\_1} class 
+is adapted for one door and known environment setup (part A).
+
+Specifically, \texttt{is\_wall} function directly query the cell type from \texttt{pygym.env}.
+\texttt{iter\_state\_space} would set the goal position, key position, door position and status
+based on \texttt{pygym.env} info.
+
+\texttt{DoorKeySolver\_2} class handles a more complex scenario (part B).
+The size of the grid is $8 \times 8$ and the perimeter is surrounded by walls. 
+There is a vertical wall at column 4 with two doors at $(4, 2)$ and $(4, 5)$. 
+Each door can either be open or locked (requires a key to open). 
+The key is randomly located in one of three positions ${(1, 1), (2, 3), (1, 6)}$.
+The goal is randomly located in one of three positions ${(5, 1), (6, 3), (5, 6)}$.
+
+specifically, \texttt{is\_wall} determines if a cell is free space by checking its position coordinates.
+\texttt{iter\_state\_space} iterates through all 36 possible environments
+and all possible agent position, direction, and key carrying states.
+
+\section{Results}
+Figure \ref{fig:known_seq} shows the optimal control sequence of one pre-known environments.
+Figure \ref{fig:random_seq} shows the optimal control sequence of one random environments.
+Full results are present in \texttt{envs/known\_envs/*.gif} and \texttt{envs/random\_env/*.gif}.
+
+\begin{figure*}
+    \centering
+    % First row
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/C-0.png}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/C-1.png}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/C-2.png}
+    \end{subfigure}
+    
+    % Second row
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/C-3.png}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/C-4.png}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/C-5.png}
+    \end{subfigure}
+\caption{optimal control sequence of 6x6 direct environments}
+\label{fig:knwon_seq0}
+\end{figure*}
+
+\begin{figure*}
+    \centering
+    % First row
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/A-0.png}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/A-1.png}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/A-2.png}
+    \end{subfigure}
+
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/A-3.png}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/A-4.png}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/A-5.png}
+    \end{subfigure}
+
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/A-6.png}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/A-7.png}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/A-8.png}
+    \end{subfigure}
+\caption{optimal control sequence of 8x8 shortcut environments}
+\label{fig:known_seq}
+\end{figure*}
+
+\begin{figure*}
+    \centering
+    % First row
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/B-0.png}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/B-1.png}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/B-2.png}
+    \end{subfigure}
+    
+    % Second row
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/B-3.png}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/B-4.png}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/B-5.png}
+    \end{subfigure}
+    
+    % Third row
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/B-6.png}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/B-7.png}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.3\textwidth}
+    \includegraphics[width=\linewidth]{img/B-8.png}
+    \end{subfigure}
+\caption{optimal control sequence of one random environments}
+\label{fig:random_seq}
+\end{figure*}
+
+
+Figure \ref{fig:num_state} shows the number of states being considered
+at each time steps. 
+As the environment gets bigger, 
+and less knowledge of the environment setup,
+the number of states increase rapidly.
+The graph also shows after some steps, 
+the DP has computed a policy for every state that can reach the goal state,
+and terminate early.
+
+\begin{figure*}
+    \centering
+    \begin{subfigure}{0.45\textwidth}
+    \includegraphics[width=\linewidth]{img/num_state_A.png}
+    \caption{known environments}
+    \end{subfigure}
+    \begin{subfigure}{0.45\textwidth}
+    \includegraphics[width=\linewidth]{img/num_state_B.png}
+    \caption{random environment}
+    \end{subfigure}
+\caption{number of state been considered at each time steps }
+\label{fig:num_state}
+\end{figure*}
+
+\end{document}
