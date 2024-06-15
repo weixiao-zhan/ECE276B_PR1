@@ -125,7 +125,7 @@ The motion model is:
 \begin{enumerate}    
         \item $u = MF$:
         The agent moves forward 1 cell in agent direction. 
-        This action is only valid when the front cell is not wall or closed doors 
+        This action is only valid when the front cell is within boundaries and not wall nor closed doors 
         (ensured on Algorithm \ref{algo:FL} line \ref{line:MF}).
 
         \item $u = TL$:
@@ -155,23 +155,23 @@ The motion model is:
 \label{subsec:l}
 Stage cost is defined on state-control combinations, whose motion models are valid.
 $$
-l(x ,u)\begin{cases}2&u=FW\\ 1&u=TR\\ 1&u=TR\\ 1&u=PK\\ 1&u=UD\\ 0&u=ST\end{cases} 
+l(x ,u) = \begin{cases}2&u=MF\\ 1&u=TL\\ 1&u=TR\\ 1&u=PK\\ 1&u=UD\\ 0&u=ST\end{cases} 
 $$
 \subsection{terminal cost}
 
 $$
-q\left( x\right)  =\begin{cases}0&x.ap=x.gp\\ \infty &o/w\end{cases} 
+q\left( x\right) = \begin{cases}0&x.ap=x.gp\\ \infty &o/w\end{cases} 
 $$
 
 \subsection{time horizon}
 Markov assumption bounds the length of DOC sequence 
 no greater than the number of states.
-$$T \le |\mathcal{X}|$$
+$$T < |\mathcal{X}|$$
 
 \subsection{backward DP}
 In Door \& Key DP, the initial values are:
 $$V_T(x) = q(x), \forall x \in \mathcal{X}$$
-State transition equation of the DP are:
+State transition equations is:
 $$
 \begin{gathered}
     \left\{\begin{aligned}
@@ -359,7 +359,7 @@ demonstrating the solver's adaptability to various configurations.
 is adapted for one door and known environment setup (part A).
 
 Specifically, \texttt{is\_wall} function directly query the cell type from \texttt{pygym.env}.
-\texttt{iter\_state\_space} would set the goal position, key position, door position and status
+And \texttt{iter\_state\_space} would set the goal position, key position, door position and status
 based on \texttt{pygym.env} info.
 
 \texttt{DoorKeySolver\_2} class handles a more complex scenario (part B).
@@ -374,8 +374,8 @@ specifically, \texttt{is\_wall} determines if a cell is free space by checking i
 and all possible agent position, direction, and key carrying states.
 
 \section{Results}
-Figure \ref{fig:known_seq} shows the optimal control sequence of one pre-known environments.
-Figure \ref{fig:random_seq} shows the optimal control sequence of one random environments.
+Figure \ref{fig:knwon_seq0} and \ref{fig:known_seq} shows the optimal control sequence of known environments.
+Figure \ref{fig:random_seq} shows the optimal control sequence of one realization in the random environment.
 Full results are present in \texttt{envs/known\_envs/*.gif} and \texttt{envs/random\_env/*.gif}.
 
 \begin{figure*}
